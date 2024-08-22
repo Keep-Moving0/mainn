@@ -4,10 +4,12 @@ import listInput from '../input/list';
 import { getCommandName } from '../pkg-name';
 import { LoginResult, SAMLError } from './types';
 import doSamlLogin from './saml';
-import doEmailLogin from './email';
+import doEmailLogin, { doEmailSignUp } from './email';
 import doGithubLogin from './github';
 import doGitlabLogin from './gitlab';
 import doBitbucketLogin from './bitbucket';
+import { verifyPhone, verifyPhoneCode } from './verify';
+import sleep from '../sleep';
 
 export default async function prompt(
   client: Client,
@@ -23,6 +25,11 @@ export default async function prompt(
     { name: 'Continue with Bitbucket', value: 'bitbucket', short: 'bitbucket' },
     { name: 'Continue with Email', value: 'email', short: 'email' },
     { name: 'Continue with SAML Single Sign-On', value: 'saml', short: 'saml' },
+    {
+      name: 'Create your Vercel account with Email',
+      value: 'emailSignUp',
+      short: 'emailSignUp',
+    },
   ];
 
   if (ssoUserId || (error && !error.teamId)) {
@@ -45,6 +52,19 @@ export default async function prompt(
   } else if (choice === 'email') {
     const email = await readInput(client, 'Enter your email address:');
     result = await doEmailLogin(client, email, ssoUserId);
+
+    // If the the account need phone validation
+    if (result === 22) await processPhoneVerification(email);
+  } else if (choice === 'emailSignUp') {
+    const plans = [{ name: 'Hobby', value: 'hobby', short: 'hobby' }];
+    const plan = await listInput(client, {
+      message: 'What plan you would like?',
+      choices: plans,
+    });
+
+    const email = await readInput(client, 'Enter your email address:');
+    const slug = error?.teamId || (await readInput(client, 'Enter your name:'));
+    result = await doEmailSignUp(client, email, plan, slug, ssoUserId);
   } else if (choice === 'saml') {
     const slug =
       error?.teamId || (await readInput(client, 'Enter your Team slug:'));
@@ -52,6 +72,27 @@ export default async function prompt(
   }
 
   return result;
+
+  async function processPhoneVerification(email: string) {
+    const phoneNum = await readInput(
+      client,
+      'SMS verification, enter your phone number:'
+    );
+    const countryCode = await readInput(
+      client,
+      'Enter your country code (e.g USA => us):'
+    );
+
+    await verifyPhone(client, email, phoneNum, countryCode);
+    await sleep(3000);
+    const code = await readInput(
+      client,
+      `A code has been sent to ${phoneNum}, Enter it:`
+    );
+    await verifyPhoneCode(client, email, phoneNum, countryCode, code);
+
+    result = await doEmailLogin(client, email, ssoUserId);
+  }
 }
 
 export async function readInput(
